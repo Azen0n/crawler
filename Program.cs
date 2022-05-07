@@ -14,13 +14,13 @@ namespace WebCrawler
             var watch = System.Diagnostics.Stopwatch.StartNew();
             crawler.Run();
             watch.Stop();
-            var elapsed = watch.ElapsedMilliseconds;
-            Console.WriteLine("\nTime elapsed: " + elapsed);
+            Console.WriteLine($"\nRecursion depth: {Crawler.MAX_RECURSION_DEPTH}");
+            Console.WriteLine($"Time elapsed: {watch.ElapsedMilliseconds / 1000.0:.00} sec");
 
-            Console.WriteLine("Links count: " + crawler.Links.Count);
+            Console.WriteLine($"Links count: {crawler.Links.Count}");
             foreach (var type in crawler.Files.Keys)
             {
-                Console.WriteLine("Files of type [" + type + "] count: " + crawler.Files[type].Count);
+                Console.WriteLine($"Files of type [{type}] count: {crawler.Files[type].Count}");
             }
         }
     }
@@ -28,18 +28,39 @@ namespace WebCrawler
     class Link
     {
         public string URL;
-        public bool IsChecked;
 
         public Link(string URL)
         {
             this.URL = URL;
-            this.IsChecked = false;
         }
 
         public bool IsFileOf(string type)
         {
             string fileName = this.URL.Split("/").Last().ToLower();
             return fileName.Contains(type);
+        }
+
+        public void AdjustURL(string BaseURL)
+        {
+            if (URL.StartsWith("/"))
+                URL = BaseURL + URL;
+
+            if (URL.EndsWith("/"))
+                URL.TrimEnd('/');
+        }
+
+        public bool IsValid(string BaseURL)
+        {
+            if (!URL.StartsWith(BaseURL) || URL.StartsWith("mailto") || !URL.StartsWith("https"))
+                return false;
+
+            if (URL.Contains("www") && !URL.StartsWith("https"))
+                return false;
+
+            if (URL.StartsWith("//"))
+                return false;
+
+            return true;
         }
     }
 
@@ -75,30 +96,12 @@ namespace WebCrawler
         {
             if (recursionDepth <= Crawler.MAX_RECURSION_DEPTH)
             {
-                if (link.URL.StartsWith("/"))
-                {
-                    link.URL = this.BaseURL + link.URL;
-                }
-                if (!link.URL.StartsWith(BaseURL) || link.URL.StartsWith("mailto") || !link.URL.StartsWith("https"))
-                {
-                    return;
-                }
+                link.AdjustURL(BaseURL);
 
-                if (link.URL.Contains("www") && !link.URL.StartsWith("https"))
-                {
-                    return;
-                }
-
-                if (link.URL.EndsWith("/"))
-                {
-                    link.URL.TrimEnd('/');
-                }
-
-                if (!this.Links.Exists(x => x.URL == link.URL))
+                if (link.IsValid(BaseURL) && !this.Links.Exists(x => x.URL == link.URL))
                 {
                     this.Links.Add(link);
-                    Console.WriteLine("LINK\t\t" + link.URL);////////////////////////////
-                    link.IsChecked = true;
+                    Console.WriteLine($"LINK\t\t{link.URL}");
 
                     var doc = _web.Load(link.URL);
                     var linkNodes = doc.DocumentNode.SelectNodes("//a");
@@ -111,20 +114,20 @@ namespace WebCrawler
 
                     if (linkNodes is not null)
                     {
+                        List<Task> tasks = new List<Task>();
                         foreach (var node in linkNodes)
                         {
                             Link newLink = new Link(node.GetAttributeValue("href", ""));
 
                             if (newLink.URL.Split("/").Last().Contains("."))
                             {
-                                if (newLink.URL.StartsWith("/"))
-                                {
-                                    newLink.URL = BaseURL + newLink.URL;
-                                }
-                                if (!newLink.URL.StartsWith(BaseURL))
-                                {
+                                newLink.AdjustURL(BaseURL);
+
+                                if (!newLink.IsValid(BaseURL))
                                     break;
-                                }
+
+
+
                                 // If type not in the list then link is skipped
                                 foreach (var type in this.Files.Keys)
                                 {
@@ -133,7 +136,7 @@ namespace WebCrawler
                                         if (!this.Files[type].Exists(x => x.URL == newLink.URL))
                                         {
                                             this.Files[type].Add(newLink);
-                                            Console.WriteLine("FILE [" + type + "]\t" + newLink.URL);///////////////////////////////
+                                            Console.WriteLine($"FILE [{type}]\t{newLink.URL}");
                                         }
                                         break;
                                     }
@@ -141,9 +144,11 @@ namespace WebCrawler
                             }
                             else
                             {
-                                Visit(newLink, recursionDepth + 1);
+                                Task task = Task.Factory.StartNew(() => Visit(newLink, recursionDepth + 1));
+                                tasks.Add(task);
                             }
                         }
+                        Task.WaitAll(tasks.ToArray());
                     }
                 }
             }
@@ -151,34 +156,37 @@ namespace WebCrawler
 
         private void CollectImages(HtmlNodeCollection nodes)
         {
+            List<Task> tasks = new List<Task>();
             foreach (var node in nodes)
             {
-                Link newLink = new Link(node.GetAttributeValue("src", ""));
-                string imageName = newLink.URL.Split("/").Last();
-                string imageType = "." + imageName.Split(".").Last().ToLower();
+                Task task = Task.Factory.StartNew(() => TaskStuff(node));
+                tasks.Add(task);
+            }
+            Task.WaitAll(tasks.ToArray());
+        }
 
-                if (newLink.URL.StartsWith("/"))
-                {
-                    newLink.URL = this.BaseURL + newLink.URL;
-                }
+        private void TaskStuff(HtmlNode node)
+        {
+            Link newLink = new Link(node.GetAttributeValue("src", ""));
+            string imageName = newLink.URL.Split("/").Last();
+            string imageType = "." + imageName.Split(".").Last().ToLower();
 
-                if (!newLink.URL.StartsWith(BaseURL))
-                {
-                    break;
-                }
+            newLink.AdjustURL(BaseURL);
 
+            if (newLink.IsValid(BaseURL))
+            {
                 if (this.Files.Keys.Contains(imageType))
                 {
                     if (!this.Files[imageType].Exists(x => x.URL == newLink.URL))
                     {
                         this.Files[imageType].Add(newLink);
-                        Console.WriteLine("FILE [" + imageType + "]\t" + newLink.URL);/////////////////////////////
+                        Console.WriteLine($"FILE [{imageType}]\t{newLink.URL}");
                     }
                 }
                 else
                 {
                     this.Files.Add(imageType, new List<Link>() { newLink });
-                    Console.WriteLine("FILE [" + imageType + "]\t" + newLink.URL);///////////////////////////////
+                    Console.WriteLine($"FILE [{imageType}]\t{newLink.URL}");
                 }
             }
         }
