@@ -126,8 +126,6 @@ namespace WebCrawler
                                 if (!newLink.IsValid(BaseURL))
                                     break;
 
-
-
                                 // If type not in the list then link is skipped
                                 foreach (var type in this.Files.Keys)
                                 {
