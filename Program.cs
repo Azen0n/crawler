@@ -183,7 +183,14 @@ namespace WebCrawler
                 }
                 else
                 {
-                    this.Files.Add(imageType, new List<Link>() { newLink });
+                    try
+                    {
+                        this.Files.Add(imageType, new List<Link>() { newLink });
+                    }
+                    catch
+                    {
+                        this.Files[imageType].Add(newLink);
+                    }
                     Console.WriteLine($"FILE [{imageType}]\t{newLink.URL}");
                 }
             }
